@@ -44,6 +44,7 @@ RAQM_ROOT = None
 TIFF_ROOT = None
 WEBP_ROOT = None
 ZLIB_ROOT = None
+ISAL_ROOT = os.environ.get("ISAL_ROOT", "/usr")
 FUZZING_BUILD = "LIB_FUZZING_ENGINE" in os.environ
 
 if sys.platform == "win32" and sys.version_info >= (3, 14):
@@ -1026,14 +1027,22 @@ class pil_build_ext(build_ext):
 def debug_build() -> bool:
     return hasattr(sys, "gettotalrefcount") or FUZZING_BUILD
 
-
 files: list[str | os.PathLike[str]] = ["src/_imaging.c"]
 for src_file in _IMAGING:
     files.append("src/" + src_file + ".c")
 for src_file in _LIB_IMAGING:
     files.append(os.path.join("src/libImaging", src_file + ".c"))
+
+imaging_extension = Extension(
+    "PIL._imaging",
+    sources=files,
+    include_dirs=[os.path.join(ISAL_ROOT, "include")],
+    libraries=["isal"],
+    library_dirs=[os.path.join(ISAL_ROOT, "lib")],
+)
+
 ext_modules = [
-    Extension("PIL._imaging", files),
+    imaging_extension,
     Extension("PIL._imagingft", ["src/_imagingft.c"]),
     Extension("PIL._imagingcms", ["src/_imagingcms.c"]),
     Extension("PIL._webp", ["src/_webp.c"]),

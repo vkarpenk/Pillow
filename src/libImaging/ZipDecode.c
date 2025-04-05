@@ -42,7 +42,7 @@ get_row_len(ImagingCodecState state, int pass) {
 int
 ImagingZipDecode(Imaging im, ImagingCodecState state, UINT8 *buf, Py_ssize_t bytes) {
     ZIPSTATE *context = (ZIPSTATE *)state->context;
-    int err;
+    int ret;
     int n;
     UINT8 *ptr;
     int i, bpp;
@@ -76,17 +76,9 @@ ImagingZipDecode(Imaging im, ImagingCodecState state, UINT8 *buf, Py_ssize_t byt
         memset(context->previous, 0, state->bytes + 1);
 
         /* Setup decompression context */
-        context->z_stream.zalloc = (alloc_func)NULL;
-        context->z_stream.zfree = (free_func)NULL;
-        context->z_stream.opaque = (voidpf)NULL;
-
-        err = inflateInit(&context->z_stream);
-        if (err < 0) {
-            state->errcode = IMAGING_CODEC_CONFIG;
-            free(context->previous);
-            context->previous = NULL;
-            return -1;
-        }
+        isal_inflate_init(&context->stream);
+        context->stream.avail_in = 0;
+        context->stream.next_in = NULL;
 
         if (context->interlaced) {
             context->pass = 0;
@@ -104,32 +96,23 @@ ImagingZipDecode(Imaging im, ImagingCodecState state, UINT8 *buf, Py_ssize_t byt
     }
 
     /* Setup the source buffer */
-    context->z_stream.next_in = buf;
-    context->z_stream.avail_in = bytes;
+    context->stream.avail_in = bytes;
+    context->stream.next_in = buf;
 
     /* Decompress what we've got this far */
-    while (context->z_stream.avail_in > 0) {
-        context->z_stream.next_out = state->buffer + context->last_output;
-        context->z_stream.avail_out = row_len + context->prefix - context->last_output;
+    while (context->stream.avail_in > 0) {
+        context->stream.avail_out = row_len + context->prefix - context->last_output;
+        context->stream.next_out = state->buffer + context->last_output;
 
-        err = inflate(&context->z_stream, Z_NO_FLUSH);
+        ret = isal_inflate(&context->stream);
 
-        if (err < 0) {
-            /* Something went wrong inside the compression library */
-            if (err == Z_DATA_ERROR) {
-                state->errcode = IMAGING_CODEC_BROKEN;
-            } else if (err == Z_MEM_ERROR) {
-                state->errcode = IMAGING_CODEC_MEMORY;
-            } else {
-                state->errcode = IMAGING_CODEC_CONFIG;
-            }
+        if (ret != ISAL_DECOMP_OK && ret != ISAL_END_INPUT) {
             free(context->previous);
             context->previous = NULL;
-            inflateEnd(&context->z_stream);
             return -1;
         }
 
-        n = row_len + context->prefix - context->z_stream.avail_out;
+        n = row_len + context->prefix - context->stream.avail_out;
 
         if (n < row_len + context->prefix) {
             context->last_output = n;
@@ -196,7 +179,6 @@ ImagingZipDecode(Imaging im, ImagingCodecState state, UINT8 *buf, Py_ssize_t byt
                         state->errcode = IMAGING_CODEC_UNKNOWN;
                         free(context->previous);
                         context->previous = NULL;
-                        inflateEnd(&context->z_stream);
                         return -1;
                 }
                 break;
@@ -263,14 +245,13 @@ ImagingZipDecode(Imaging im, ImagingCodecState state, UINT8 *buf, Py_ssize_t byt
         /* all inflate output has been consumed */
         context->last_output = 0;
 
-        if (state->y >= state->ysize || err == Z_STREAM_END) {
+        if (state->y >= state->ysize || ret == ISAL_END_INPUT) {
             /* The image and the data should end simultaneously */
-            /* if (state->y < state->ysize || err != Z_STREAM_END)
+            /* if (state->y < state->ysize || ret != ISAL_END_INPUT)
                 state->errcode = IMAGING_CODEC_BROKEN; */
 
             free(context->previous);
             context->previous = NULL;
-            inflateEnd(&context->z_stream);
             return -1; /* end of file (errcode=0) */
         }
 
@@ -292,7 +273,7 @@ ImagingZipDecodeCleanup(ImagingCodecState state) {
 
     /* Clean up */
     if (context->previous) {
-        inflateEnd(&context->z_stream);
+        isal_inflate_reset(&context->stream);
         free(context->previous);
         context->previous = NULL;
     }

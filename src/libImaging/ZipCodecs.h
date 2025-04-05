@@ -8,6 +8,7 @@
  */
 
 #include "zlib.h"
+#include "isa-l/igzip_lib.h"
 
 /* modes */
 #define ZIP_PNG 0            /* continuous, filtered image data */
@@ -36,6 +37,8 @@ typedef struct {
     /* PRIVATE CONTEXT (set by decoder/encoder) */
 
     z_stream z_stream; /* (de)compression stream */
+    struct isal_zstream isal_strm;
+    struct inflate_state stream;
 
     UINT8 *previous; /* previous line (allocated) */
 

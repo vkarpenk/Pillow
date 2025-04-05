@@ -19,12 +19,12 @@
 #ifdef HAVE_LIBZ
 
 #include "ZipCodecs.h"
+#include "isa-l/igzip_lib.h"
 
 int
 ImagingZipEncode(Imaging im, ImagingCodecState state, UINT8 *buf, int bytes) {
     ZIPSTATE *context = (ZIPSTATE *)state->context;
     int err;
-    int compress_level, compress_type;
     UINT8 *ptr;
     int i, bpp, s, sum;
     ImagingSectionCookie cookie;
@@ -71,81 +71,32 @@ ImagingZipEncode(Imaging im, ImagingCodecState state, UINT8 *buf, int bytes) {
         /* Initialise previous buffer to black */
         memset(context->previous, 0, state->bytes + 1);
 
-        /* Setup compression context */
-        context->z_stream.zalloc = (alloc_func)0;
-        context->z_stream.zfree = (free_func)0;
-        context->z_stream.opaque = (voidpf)0;
-        context->z_stream.next_in = 0;
-        context->z_stream.avail_in = 0;
+        /* Setup ISA-L compression context */
+        isal_deflate_init(&context->isal_strm);
+        context->isal_strm.end_of_stream = 0;
+        context->isal_strm.flush = NO_FLUSH;
 
-        compress_level =
-            (context->optimize) ? Z_BEST_COMPRESSION : context->compress_level;
-
-        if (context->compress_type == -1) {
-            compress_type =
-                (context->mode == ZIP_PNG) ? Z_FILTERED : Z_DEFAULT_STRATEGY;
-        } else {
-            compress_type = context->compress_type;
-        }
-
-        err = deflateInit2(
-            &context->z_stream,
-            /* compression level */
-            compress_level,
-            /* compression method */
-            Z_DEFLATED,
-            /* compression memory resources */
-            15,
-            9,
-            /* compression strategy (image data are filtered)*/
-            compress_type
-        );
-        if (err < 0) {
-            state->errcode = IMAGING_CODEC_CONFIG;
-            return -1;
-        }
-
-        if (context->dictionary && context->dictionary_size > 0) {
-            err = deflateSetDictionary(
-                &context->z_stream,
-                (unsigned char *)context->dictionary,
-                context->dictionary_size
-            );
-            if (err < 0) {
-                state->errcode = IMAGING_CODEC_CONFIG;
-                return -1;
-            }
-        }
+        if (context->compress_level == 1) {
+            context->isal_strm.level = 1;
+            context->isal_strm.level_buf = malloc(ISAL_DEF_LVL1_DEFAULT);
+            context->isal_strm.level_buf_size = ISAL_DEF_LVL1_DEFAULT;
+        } else if (context->compress_level == 2) {
+            context->isal_strm.level = 2;
+            context->isal_strm.level_buf = malloc(ISAL_DEF_LVL2_DEFAULT);
+            context->isal_strm.level_buf_size = ISAL_DEF_LVL2_DEFAULT;
+        } else if (context->compress_level == 3) {
+            context->isal_strm.level = 3;
+            context->isal_strm.level_buf = malloc(ISAL_DEF_LVL3_DEFAULT);
+            context->isal_strm.level_buf_size = ISAL_DEF_LVL3_DEFAULT;
+        } 
 
         /* Ready to decode */
         state->state = 1;
     }
 
     /* Setup the destination buffer */
-    context->z_stream.next_out = buf;
-    context->z_stream.avail_out = bytes;
-    if (context->z_stream.next_in && context->z_stream.avail_in > 0) {
-        /* We have some data from previous round, deflate it first */
-        err = deflate(&context->z_stream, Z_NO_FLUSH);
-
-        if (err < 0) {
-            /* Something went wrong inside the compression library */
-            if (err == Z_DATA_ERROR) {
-                state->errcode = IMAGING_CODEC_BROKEN;
-            } else if (err == Z_MEM_ERROR) {
-                state->errcode = IMAGING_CODEC_MEMORY;
-            } else {
-                state->errcode = IMAGING_CODEC_CONFIG;
-            }
-            free(context->paeth);
-            free(context->average);
-            free(context->up);
-            free(context->prior);
-            free(context->previous);
-            deflateEnd(&context->z_stream);
-            return -1;
-        }
-    }
+    context->isal_strm.next_out = buf;
+    context->isal_strm.avail_out = bytes;
 
     ImagingSectionEnter(&cookie);
     for (;;) {
@@ -153,7 +104,7 @@ ImagingZipEncode(Imaging im, ImagingCodecState state, UINT8 *buf, int bytes) {
             case 1:
 
                 /* Compress image data */
-                while (context->z_stream.avail_out > 0) {
+                while (context->isal_strm.avail_out > 0) {
                     if (state->y >= state->ysize) {
                         /* End of image; now flush compressor buffers */
                         state->state = 2;
@@ -276,29 +227,10 @@ ImagingZipEncode(Imaging im, ImagingCodecState state, UINT8 *buf, int bytes) {
                     }
 
                     /* Compress this line */
-                    context->z_stream.next_in = context->output;
-                    context->z_stream.avail_in = state->bytes + 1;
+                    context->isal_strm.next_in = context->output;
+                    context->isal_strm.avail_in = state->bytes + 1;
 
-                    err = deflate(&context->z_stream, Z_NO_FLUSH);
-
-                    if (err < 0) {
-                        /* Something went wrong inside the compression library */
-                        if (err == Z_DATA_ERROR) {
-                            state->errcode = IMAGING_CODEC_BROKEN;
-                        } else if (err == Z_MEM_ERROR) {
-                            state->errcode = IMAGING_CODEC_MEMORY;
-                        } else {
-                            state->errcode = IMAGING_CODEC_CONFIG;
-                        }
-                        free(context->paeth);
-                        free(context->average);
-                        free(context->up);
-                        free(context->prior);
-                        free(context->previous);
-                        deflateEnd(&context->z_stream);
-                        ImagingSectionLeave(&cookie);
-                        return -1;
-                    }
+                    isal_deflate(&context->isal_strm);
 
                     /* Swap buffer pointers */
                     ptr = state->buffer;
@@ -306,38 +238,35 @@ ImagingZipEncode(Imaging im, ImagingCodecState state, UINT8 *buf, int bytes) {
                     context->previous = ptr;
                 }
 
-                if (context->z_stream.avail_out == 0) {
+                if (context->isal_strm.avail_out == 0) {
                     break; /* Buffer full */
                 }
 
             case 2:
-
                 /* End of image data; flush compressor buffers */
+                while (context->isal_strm.avail_out > 0) {
+                    context->isal_strm.end_of_stream = 1;
+                    isal_deflate(&context->isal_strm);
 
-                while (context->z_stream.avail_out > 0) {
-                    err = deflate(&context->z_stream, Z_FINISH);
-
-                    if (err == Z_STREAM_END) {
+                    if (context->isal_strm.internal_state.state == ZSTATE_END) {
                         free(context->paeth);
                         free(context->average);
                         free(context->up);
                         free(context->prior);
                         free(context->previous);
 
-                        deflateEnd(&context->z_stream);
-
                         state->errcode = IMAGING_CODEC_END;
 
                         break;
                     }
 
-                    if (context->z_stream.avail_out == 0) {
+                    if (context->isal_strm.avail_out == 0) {
                         break; /* Buffer full */
                     }
                 }
         }
         ImagingSectionLeave(&cookie);
-        return bytes - context->z_stream.avail_out;
+        return bytes - context->isal_strm.avail_out;
     }
 
     /* Should never ever arrive here... */
@@ -345,6 +274,7 @@ ImagingZipEncode(Imaging im, ImagingCodecState state, UINT8 *buf, int bytes) {
     ImagingSectionLeave(&cookie);
     return -1;
 }
+
 
 /* -------------------------------------------------------------------- */
 /* Cleanup                                                              */
