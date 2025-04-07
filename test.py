@@ -2,11 +2,14 @@
 # python test.py <compress_level>
 # Example: python test.py 1
 
-from PIL import Image
+from PIL import Image, ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 import sys
 import time
 import os
 import numpy as np
+from io import BytesIO
+import requests
 
 if len(sys.argv) != 2:
     print("Usage: python test.py <compress_level>")
@@ -20,9 +23,14 @@ except ValueError as e:
     print(f"Invalid compress level: {e}")
     sys.exit(1)
 
-height, width = 4000, 10000
-blue_color = (255, 0, 0) 
-img_array = np.full((height, width, 3), blue_color, dtype=np.uint8)
+image_url = "https://images.pexels.com/photos/31384129/pexels-photo-31384129/free-photo-of-bustling-urban-street-in-tokyo-japan.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2"
+response = requests.get(image_url)
+if response.status_code != 200:
+    print("Failed to download the image.")
+    sys.exit(1)
+
+img = Image.open(BytesIO(response.content))
+img_array = np.array(img)
 
 original_file = 'test_image_original.png'
 with open(original_file, 'wb') as f:
