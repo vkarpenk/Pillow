@@ -17,8 +17,6 @@ if len(sys.argv) != 2:
 
 try:
     compress_level = int(sys.argv[1])
-    if compress_level < 0 or compress_level > 9:
-        raise ValueError("Compress level must be between 0 and 9")
 except ValueError as e:
     print(f"Invalid compress level: {e}")
     sys.exit(1)

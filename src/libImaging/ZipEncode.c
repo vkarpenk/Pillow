@@ -75,20 +75,21 @@ ImagingZipEncode(Imaging im, ImagingCodecState state, UINT8 *buf, int bytes) {
         isal_deflate_init(&context->isal_strm);
         context->isal_strm.end_of_stream = 0;
         context->isal_strm.flush = NO_FLUSH;
-
+        
         if (context->compress_level == 1) {
             context->isal_strm.level = 1;
             context->isal_strm.level_buf = malloc(ISAL_DEF_LVL1_DEFAULT);
             context->isal_strm.level_buf_size = ISAL_DEF_LVL1_DEFAULT;
-        } else if (context->compress_level == 2) {
-            context->isal_strm.level = 2;
-            context->isal_strm.level_buf = malloc(ISAL_DEF_LVL2_DEFAULT);
-            context->isal_strm.level_buf_size = ISAL_DEF_LVL2_DEFAULT;
         } else if (context->compress_level == 3) {
             context->isal_strm.level = 3;
             context->isal_strm.level_buf = malloc(ISAL_DEF_LVL3_DEFAULT);
             context->isal_strm.level_buf_size = ISAL_DEF_LVL3_DEFAULT;
-        } 
+        } else {
+            /* Default to level 2 */
+            context->isal_strm.level = 2;
+            context->isal_strm.level_buf = malloc(ISAL_DEF_LVL2_DEFAULT);
+            context->isal_strm.level_buf_size = ISAL_DEF_LVL2_DEFAULT;
+        }
 
         /* Ready to decode */
         state->state = 1;
